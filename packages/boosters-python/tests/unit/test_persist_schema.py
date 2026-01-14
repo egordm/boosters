@@ -20,7 +20,7 @@ from boosters.persist.schema import (
 def make_regression_data(n_samples: int = 200, n_features: int = 5) -> tuple[np.ndarray, np.ndarray]:
     """Generate synthetic regression data."""
     rng = np.random.default_rng(42)
-    X = rng.standard_normal((n_samples, n_features)).astype(np.float32)  # noqa: N806
+    X = rng.standard_normal((n_samples, n_features)).astype(np.float32)
     y = (X[:, 0] + 0.5 * X[:, 1] + rng.standard_normal(n_samples) * 0.1).astype(np.float32)
     return X, y
 
@@ -32,7 +32,7 @@ class TestJsonEnvelopeParsing:
     def gbdt_model(self) -> GBDTModel:
         """Create a simple trained GBDT model."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((200, 5)).astype(np.float32)
         y = (X[:, 0] + 0.5 * X[:, 1] + rng.standard_normal(200) * 0.1).astype(np.float32)
 
         return GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10))
@@ -41,7 +41,7 @@ class TestJsonEnvelopeParsing:
     def gblinear_model(self) -> GBLinearModel:
         """Create a simple trained GBLinear model."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((200, 5)).astype(np.float32)
         y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
 
         return GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
@@ -155,7 +155,7 @@ class TestBinaryClassification:
     def test_gbdt_binary_parses(self) -> None:
         """Binary classification GBDT model parses correctly."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((200, 5)).astype(np.float32)
         y = (X[:, 0] > 0).astype(np.float32)
 
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.logistic()))
@@ -173,7 +173,7 @@ class TestMulticlass:
     def test_gbdt_multiclass_parses(self) -> None:
         """Multiclass GBDT model parses correctly."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((300, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((300, 5)).astype(np.float32)
         y = (np.digitize(X[:, 0], bins=[-0.5, 0.5])).astype(np.float32)  # 3 classes
 
         model = GBDTModel.train(
@@ -235,7 +235,7 @@ class TestCrossLanguageRoundTrip:
 
     def test_gbdt_roundtrip_rust_python_rust(self) -> None:
         """GBDT: Rust JSON → Python pydantic → JSON → Rust loads correctly."""
-        X, y = make_regression_data()  # noqa: N806
+        X, y = make_regression_data()
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10))
 
         # Step 1: Rust → JSON
@@ -258,7 +258,7 @@ class TestCrossLanguageRoundTrip:
 
     def test_gblinear_roundtrip_rust_python_rust(self) -> None:
         """GBLinear: Rust JSON → Python pydantic → JSON → Rust loads correctly."""
-        X, y = make_regression_data()  # noqa: N806
+        X, y = make_regression_data()
         model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
 
         # Step 1: Rust → JSON
@@ -282,7 +282,7 @@ class TestCrossLanguageRoundTrip:
     def test_binary_classification_roundtrip(self) -> None:
         """Binary classification model survives round-trip."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((200, 5)).astype(np.float32)
         y = (X[:, 0] > 0).astype(np.float32)
 
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10, objective=Objective.logistic()))
@@ -301,7 +301,7 @@ class TestCrossLanguageRoundTrip:
     def test_multiclass_roundtrip(self) -> None:
         """Multiclass model survives round-trip."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((300, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((300, 5)).astype(np.float32)
         y = (np.digitize(X[:, 0], bins=[-0.5, 0.5])).astype(np.float32)
 
         model = GBDTModel.train(

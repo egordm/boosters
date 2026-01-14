@@ -85,14 +85,18 @@ lint.per-file-ignores."./packages/*/examples/*" = [
   "T201",   # print is expected in examples
 ]
 lint.per-file-ignores."./packages/*/tests/*" = [
+  "ANN",     # Type annotations not required in tests
   "ARG",     # Unused function args -> fixtures nevertheless are functionally relevant
   "D",       # Docstring rules relaxed in tests
   "DOC",     # Docstring rules relaxed in tests
   "FBT",     # Booleans as positional arguments common in @pytest.mark.parametrize()
   "INP001",  # Test directories don't need __init__.py
+  "N806",    # Variable naming (X for matrices is common in ML)
   "PLC0415", # Lazy imports in conditional test logic
   "PT018",   # Compound assertions acceptable in tests
+  "PTH",     # Path vs pathlib - either is fine in tests
   "S101",    # Asserts expected in tests
+  "S301",    # Pickle usage is expected when testing pickle serialization
   "S311",    # Standard pseudo-random generators fine in tests
   "SLF001",  # Private access often needed in tests
 ]
@@ -376,3 +380,13 @@ cmd = "sphinx-build -b coverage docs docs/_build/coverage"
 [tool.poe.tasks."docs:validate"]
 help = "Validate documentation internal links"
 cmd = "python docs/scripts/validate_links.py --docs-root docs"
+
+# Release tasks
+[tool.poe.tasks."version"]
+help = "Set version for all packages (boosters-python)"
+cmd = "python scripts/set_version.py --version ${version}"
+args = [ { name = "version", type = "string", help = "Version to set", required = true } ]
+
+[tool.poe.tasks."python:wheel"]
+help = "Build Python wheel for release"
+cmd = "maturin build -m packages/boosters-python/Cargo.toml --release --strip"

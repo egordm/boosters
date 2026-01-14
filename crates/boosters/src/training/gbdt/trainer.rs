@@ -306,8 +306,6 @@ impl GBDTTrainer {
                             self.params.learning_rate,
                         );
                         // Apply fitted coefficients to tree
-                        #[cfg(debug_assertions)]
-                        let fitted_count = fitted.len();
                         for leaf in fitted {
                             mutable_tree.set_linear_leaf(
                                 leaf.node_id,
@@ -316,8 +314,6 @@ impl GBDTTrainer {
                                 leaf.coefficients,
                             );
                         }
-                        #[cfg(debug_assertions)]
-                        eprintln!("Round {}: set {} linear leaves", round, fitted_count);
                     }
                 }
 

@@ -1,6 +1,6 @@
 """Tests for XGBoost and LightGBM conversion utilities."""
 
-# ruff: noqa: N806  # Allow uppercase variable names for X, y (ML convention)
+# Allow uppercase variable names for X, y (ML convention)
 
 from __future__ import annotations
 

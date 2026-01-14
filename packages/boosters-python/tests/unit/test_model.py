@@ -23,7 +23,7 @@ from boosters import (
 def make_regression_data(n_samples: int = 200, n_features: int = 5, seed: int = 42) -> tuple[np.ndarray, np.ndarray]:
     """Generate simple regression data."""
     rng = np.random.default_rng(seed)
-    X = rng.standard_normal((n_samples, n_features)).astype(np.float32)  # noqa: N806
+    X = rng.standard_normal((n_samples, n_features)).astype(np.float32)
     y = (X[:, 0] + 0.5 * X[:, 1] + rng.standard_normal(n_samples) * 0.1).astype(np.float32)
     return X, y
 
@@ -31,7 +31,7 @@ def make_regression_data(n_samples: int = 200, n_features: int = 5, seed: int = 
 def make_binary_data(n_samples: int = 200, n_features: int = 5, seed: int = 42) -> tuple[np.ndarray, np.ndarray]:
     """Generate simple binary classification data."""
     rng = np.random.default_rng(seed)
-    X = rng.standard_normal((n_samples, n_features)).astype(np.float32)  # noqa: N806
+    X = rng.standard_normal((n_samples, n_features)).astype(np.float32)
     y = (X[:, 0] + X[:, 1] > 0).astype(np.float32)
     return X, y
 
@@ -41,7 +41,7 @@ class TestGBDTModelFitPredict:
 
     def test_regression_workflow(self) -> None:
         """Complete regression workflow works."""
-        X, y = make_regression_data()  # noqa: N806
+        X, y = make_regression_data()
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
         assert model.n_trees == 20
         assert model.n_features == 5
@@ -52,7 +52,7 @@ class TestGBDTModelFitPredict:
 
     def test_binary_classification_workflow(self) -> None:
         """Binary classification workflow works."""
-        X, y = make_binary_data()  # noqa: N806
+        X, y = make_binary_data()
         model = GBDTModel.train(
             Dataset(X, y),
             config=GBDTConfig(n_estimators=20, objective=Objective.logistic()),
@@ -64,7 +64,7 @@ class TestGBDTModelFitPredict:
 
     def test_predict_vs_predict_raw(self) -> None:
         """predict returns transformed, predict_raw returns margins."""
-        X, y = make_binary_data()  # noqa: N806
+        X, y = make_binary_data()
         model = GBDTModel.train(
             Dataset(X, y),
             config=GBDTConfig(n_estimators=20, objective=Objective.logistic()),
@@ -79,8 +79,8 @@ class TestGBDTModelFitPredict:
 
     def test_early_stopping(self) -> None:
         """Early stopping stops before max iterations."""
-        X, y = make_regression_data(400)  # noqa: N806
-        X_train, X_val = X[:300], X[300:]  # noqa: N806
+        X, y = make_regression_data(400)
+        X_train, X_val = X[:300], X[300:]
         y_train, y_val = y[:300], y[300:]
 
         model = GBDTModel.train(
@@ -97,7 +97,7 @@ class TestGBDTModelFitPredict:
 
     def test_feature_importance(self) -> None:
         """Feature importance has correct shape."""
-        X, y = make_regression_data()  # noqa: N806
+        X, y = make_regression_data()
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
 
         importance = model.feature_importance()
@@ -111,25 +111,25 @@ class TestGBDTModelErrors:
     def test_predict_before_fit_raises(self) -> None:
         """Unfitted models are not constructible; training requires labels."""
         rng = np.random.default_rng(42)
-        X = rng.random((10, 5)).astype(np.float32)  # noqa: N806
+        X = rng.random((10, 5)).astype(np.float32)
 
         with pytest.raises((ValueError, RuntimeError), match="labels"):
             GBDTModel.train(Dataset(X), config=GBDTConfig(n_estimators=3))
 
     def test_wrong_feature_count_raises(self) -> None:
         """Predicting with wrong feature count raises error."""
-        X, y = make_regression_data()  # noqa: N806
+        X, y = make_regression_data()
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=10))
 
         rng = np.random.default_rng(42)
-        X_wrong = rng.random((10, 3)).astype(np.float32)  # noqa: N806
+        X_wrong = rng.random((10, 3)).astype(np.float32)
         with pytest.raises((ValueError, RuntimeError), match="features"):
             model.predict(Dataset(X_wrong))
 
     def test_fit_without_labels_raises(self) -> None:
         """train without labels raises error."""
         rng = np.random.default_rng(42)
-        X = rng.random((100, 5)).astype(np.float32)  # noqa: N806
+        X = rng.random((100, 5)).astype(np.float32)
         with pytest.raises((ValueError, RuntimeError), match="labels"):
             GBDTModel.train(Dataset(X), config=GBDTConfig(n_estimators=3))
 
@@ -140,7 +140,7 @@ class TestGBLinearModelFitPredict:
     def test_linear_regression_workflow(self) -> None:
         """Linear regression workflow works."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((200, 5)).astype(np.float32)
         true_weights = np.array([1, 0.5, -0.3, 0.2, 0], dtype=np.float32)
         y = X @ true_weights
 
@@ -157,7 +157,7 @@ class TestGBLinearModelFitPredict:
     def test_regularization_shrinks_weights(self) -> None:
         """L2 regularization shrinks weights."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((200, 5)).astype(np.float32)
         y = (X[:, 0] + X[:, 1]).astype(np.float32)
 
         model_low_reg = GBLinearModel.train(
@@ -178,7 +178,7 @@ class TestGBDTModelPersistence:
 
     def test_binary_roundtrip_preserves_predictions(self) -> None:
         """to_bytes → from_bytes preserves predictions exactly."""
-        X, y = make_regression_data()  # noqa: N806
+        X, y = make_regression_data()
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
 
         original_preds = model.predict(Dataset(X))
@@ -191,7 +191,7 @@ class TestGBDTModelPersistence:
 
     def test_json_roundtrip_preserves_predictions(self) -> None:
         """to_json_bytes → from_json_bytes preserves predictions."""
-        X, y = make_regression_data()  # noqa: N806
+        X, y = make_regression_data()
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
 
         original_preds = model.predict(Dataset(X))
@@ -204,7 +204,7 @@ class TestGBDTModelPersistence:
 
     def test_binary_classification_roundtrip(self) -> None:
         """Binary classification model roundtrips correctly."""
-        X, y = make_binary_data()  # noqa: N806
+        X, y = make_binary_data()
         model = GBDTModel.train(
             Dataset(X, y),
             config=GBDTConfig(n_estimators=20, objective=Objective.logistic()),
@@ -219,7 +219,7 @@ class TestGBDTModelPersistence:
 
     def test_serialized_model_properties(self) -> None:
         """Loaded model has correct properties."""
-        X, y = make_regression_data()  # noqa: N806
+        X, y = make_regression_data()
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=20))
 
         loaded = GBDTModel.from_bytes(model.to_bytes())
@@ -255,7 +255,7 @@ class TestGBLinearModelPersistence:
     def test_binary_roundtrip_preserves_predictions(self) -> None:
         """to_bytes → from_bytes preserves predictions exactly."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((200, 5)).astype(np.float32)
         y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
 
         model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
@@ -271,7 +271,7 @@ class TestGBLinearModelPersistence:
     def test_json_roundtrip_preserves_predictions(self) -> None:
         """to_json_bytes → from_json_bytes preserves predictions."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((200, 5)).astype(np.float32)
         y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
 
         model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
@@ -287,7 +287,7 @@ class TestGBLinearModelPersistence:
     def test_serialized_model_preserves_weights(self) -> None:
         """Loaded model has same weights."""
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((200, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((200, 5)).astype(np.float32)
         y = (X[:, 0] + 0.5 * X[:, 1]).astype(np.float32)
 
         model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=50))
@@ -306,7 +306,7 @@ class TestPolymorphicLoading:
         import boosters
 
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((100, 5)).astype(np.float32)
         y = rng.standard_normal(100).astype(np.float32)
 
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=3))
@@ -322,7 +322,7 @@ class TestPolymorphicLoading:
         import boosters
 
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((100, 5)).astype(np.float32)
         y = rng.standard_normal(100).astype(np.float32)
 
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=3))
@@ -338,7 +338,7 @@ class TestPolymorphicLoading:
         import boosters
 
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((100, 5)).astype(np.float32)
         y = rng.standard_normal(100).astype(np.float32)
 
         model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=5))
@@ -354,7 +354,7 @@ class TestPolymorphicLoading:
         import boosters
 
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((100, 5)).astype(np.float32)
         y = rng.standard_normal(100).astype(np.float32)
         ds = Dataset(X, y)
 
@@ -371,7 +371,7 @@ class TestPolymorphicLoading:
         import boosters
 
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((100, 5)).astype(np.float32)
         y = rng.standard_normal(100).astype(np.float32)
 
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=3))
@@ -389,7 +389,7 @@ class TestPolymorphicLoading:
         import boosters
 
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((100, 5)).astype(np.float32)
         y = rng.standard_normal(100).astype(np.float32)
 
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=3))
@@ -407,7 +407,7 @@ class TestPolymorphicLoading:
         import boosters
 
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((100, 5)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((100, 5)).astype(np.float32)
         y = rng.standard_normal(100).astype(np.float32)
 
         model = GBLinearModel.train(Dataset(X, y), config=GBLinearConfig(n_estimators=5))
@@ -422,7 +422,7 @@ class TestPolymorphicLoading:
         import boosters
 
         rng = np.random.default_rng(42)
-        X = rng.standard_normal((50, 3)).astype(np.float32)  # noqa: N806
+        X = rng.standard_normal((50, 3)).astype(np.float32)
         y = rng.standard_normal(50).astype(np.float32)
 
         model = GBDTModel.train(Dataset(X, y), config=GBDTConfig(n_estimators=2))

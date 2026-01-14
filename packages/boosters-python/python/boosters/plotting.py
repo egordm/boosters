@@ -237,9 +237,9 @@ def plot_tree(
         figsize = (width, height)
 
     if ax is None:
-        fig, ax = plt.subplots(figsize=figsize)
+        _fig, ax = plt.subplots(figsize=figsize)
     else:
-        fig = ax.figure
+        _fig = ax.figure
 
     # Find value range for coloring
     all_values = [leaf_values[i] for i in range(num_nodes) if is_leaf(i)]

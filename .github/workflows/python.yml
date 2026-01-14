@@ -1,167 +1,223 @@
-name: Python
+name: Python Release
 
-# DISABLED: Using poe tasks in ci.yml instead
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 on:
-  push:
-    branches: [never]  # Disable this workflow
-  pull_request:
-    branches: [never]  # Disable this workflow
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Version tag to release (e.g., v0.1.0 or 0.1.0). Prefixing with v is optional.'
+        required: true
+        default: ""
+      dev_build:
+        description: 'Create a dev build (.devN suffix based on timestamp)'
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
 
 env:
   CARGO_TERM_COLOR: always
+  PYTHON_VERSION: "3.12"
 
 jobs:
+  # Build wheels for multiple platforms using maturin
   build:
-    name: Build & Test
+    name: Build wheels (${{ matrix.target }})
     runs-on: ${{ matrix.os }}
     strategy:
       fail-fast: false
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
-        python: ["3.12", "3.13"]
+        include:
+          # Linux x86_64
+          - os: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            manylinux: auto
+          # Linux aarch64
+          - os: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            manylinux: auto
+          # macOS x86_64
+          - os: macos-13
+            target: x86_64-apple-darwin
+          # macOS ARM64
+          - os: macos-latest
+            target: aarch64-apple-darwin
+          # Windows x86_64
+          - os: windows-latest
+            target: x86_64-pc-windows-msvc
 
-    defaults:
-      run:
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Compute version
+        id: ver
         shell: bash
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install ${{ matrix.python }}
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install dependencies
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          DEV_BUILD: ${{ github.event.inputs.dev_build }}
         run: |
-          uv sync --group dev
-
-      - name: Run full workspace checks
-        run: uv run poe check
-
-  persist-cross-language:
-    name: Persist Cross-Language
-    runs-on: ubuntu-latest
-
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-crosslang-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-crosslang-
-
-      - name: Install dependencies
-        run: uv sync --group dev
-
-      - name: Build Python bindings
-        run: uv run poe python:develop --release
-
-      - name: Rust -> binary (.bstr) and Python reads
-        run: |
-          FIXTURE=crates/boosters/tests/test-cases/persist/v1/gbtree/inference/gbtree_regression.model.bstr.json
-          OUT_BSTR=target/tmp/rust_written.model.bstr
-          mkdir -p target/tmp
-          cargo run --package boosters --example persist_json_to_bstr -- "$FIXTURE" "$OUT_BSTR"
-          uv run python -c "import boosters; b=open('$OUT_BSTR','rb').read(); m=boosters.Model.load_from_bytes(b); info=boosters.Model.inspect_bytes(b); assert info.schema_version >= 1"
-
-      - name: Python schema -> JSON (.bstr.json) and Rust reads
-        run: |
-          FIXTURE=crates/boosters/tests/test-cases/persist/v1/gbtree/inference/gbtree_regression.model.bstr.json
-          OUT_JSON=target/tmp/python_written.model.bstr.json
-          OUT_BSTR=target/tmp/rust_read_python.model.bstr
-          uv run python -c "import json; from pathlib import Path; from boosters.persist.schema import ModelFile; p=Path('$FIXTURE'); mf=ModelFile.model_validate(json.loads(p.read_text())); Path('$OUT_JSON').write_text(mf.model_dump_json())"
-          cargo run --package boosters --example persist_json_to_bstr -- "$OUT_JSON" "$OUT_BSTR"
-
-  stub-freshness:
-    name: Check Stub Freshness
-    runs-on: ubuntu-latest
-    
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v4
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Cache cargo registry
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/.cargo/registry
-            ~/.cargo/git
-            target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: |
-            ${{ runner.os }}-cargo-
-
-      - name: Install dependencies
-        run: |
-          uv sync
-          uv pip install maturin
-
-      - name: Build Python bindings
-        run: |
-          cd packages/boosters-python
-          uv run maturin develop
-
-      # TODO: Uncomment when stub generation is automated
-      # - name: Generate stubs
-      #   run: |
-      #     cd packages/boosters-python
-      #     uv run python -c "import boosters; boosters.generate_stubs()"
-      #
-      # - name: Check stub freshness
-      #   run: |
-      #     if ! git diff --exit-code packages/boosters-python/python/boosters/_boosters_rs.pyi; then
-      #       echo "::error::Type stubs are out of date. Run stub generation and commit the changes."
-      #       exit 1
-      #     fi
-
-      - name: Verify stubs exist
-        run: |
-          if [ ! -f packages/boosters-python/python/boosters/_boosters_rs.pyi ]; then
-            echo "::error::Type stub file is missing"
-            exit 1
+          set -euo pipefail
+          
+          # Determine base version
+          if [ -n "${RELEASE_TAG:-}" ]; then
+            VERSION="$RELEASE_TAG"
+          elif [ -n "${INPUT_VERSION:-}" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            # Fallback to ref tag
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              VERSION="${GITHUB_REF#refs/tags/}"
+            else
+              echo "No version provided, aborting"
+              exit 1
+            fi
           fi
+          
+          # Remove leading 'v' if present
+          VERSION="${VERSION#v}"
+          
+          # Add dev suffix if requested
+          if [ "${DEV_BUILD:-false}" = "true" ]; then
+            TS=$(date -u +%Y%m%d%H%M)
+            HASH=$(git rev-parse --short=8 HEAD)
+            VERSION="${VERSION}.dev${TS}"
+          fi
+          
+          echo "Release version: $VERSION"
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply version
+        run: uv run poe version --version "${{ steps.ver.outputs.version }}"
+
+      - name: Generate stubs
+        run: uv run poe python:stubs-gen
+
+      - name: Build wheel
+        uses: PyO3/maturin-action@v1
+        with:
+          target: ${{ matrix.target }}
+          args: --release --strip -m packages/boosters-python/Cargo.toml --out dist
+          manylinux: ${{ matrix.manylinux || 'auto' }}
+
+      - name: Upload wheel
+        uses: actions/upload-artifact@v4
+        with:
+          name: wheel-${{ matrix.target }}
+          path: dist/*.whl
+          if-no-files-found: error
+
+  # Build source distribution
+  sdist:
+    name: Build sdist
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v6
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install ${{ env.PYTHON_VERSION }}
+
+      - name: Compute version
+        id: ver
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name }}
+          INPUT_VERSION: ${{ github.event.inputs.version }}
+          DEV_BUILD: ${{ github.event.inputs.dev_build }}
+        run: |
+          set -euo pipefail
+          
+          if [ -n "${RELEASE_TAG:-}" ]; then
+            VERSION="$RELEASE_TAG"
+          elif [ -n "${INPUT_VERSION:-}" ]; then
+            VERSION="$INPUT_VERSION"
+          else
+            if [[ "$GITHUB_REF" == refs/tags/* ]]; then
+              VERSION="${GITHUB_REF#refs/tags/}"
+            else
+              echo "No version provided, aborting"
+              exit 1
+            fi
+          fi
+          
+          VERSION="${VERSION#v}"
+          
+          if [ "${DEV_BUILD:-false}" = "true" ]; then
+            TS=$(date -u +%Y%m%d%H%M)
+            VERSION="${VERSION}.dev${TS}"
+          fi
+          
+          echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
+
+      - name: Apply version
+        run: uv run poe version --version "${{ steps.ver.outputs.version }}"
+
+      - name: Generate stubs
+        run: uv run poe python:stubs-gen
+
+      - name: Build sdist
+        uses: PyO3/maturin-action@v1
+        with:
+          command: sdist
+          args: -m packages/boosters-python/Cargo.toml --out dist
+
+      - name: Upload sdist
+        uses: actions/upload-artifact@v4
+        with:
+          name: sdist
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  # Publish to PyPI using trusted publishing
+  publish:
+    name: Publish to PyPI
+    needs: [build, sdist]
+    runs-on: ubuntu-latest
+    environment: release
+    permissions:
+      # Required for trusted publishing
+      id-token: write
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      - name: List artifacts
+        run: ls -la dist/
+
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: dist/
+          # Uses trusted publishing - no API token needed
+          # Configure at: https://pypi.org/manage/project/boosters/settings/publishing/
