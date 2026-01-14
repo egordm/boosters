@@ -1,0 +1,25 @@
+[project]
+name = "boosters-docs"
+version = "0.1.0"
+description = "Documentation for boosters"
+requires-python = ">=3.12"
+
+dependencies = [
+    "boosters",                     # For autodoc
+    "sphinx>=7.0",
+    "pydata-sphinx-theme>=0.15",
+    "myst-parser>=2.0",
+    "nbsphinx>=0.9",
+    "sphinx-autodoc-typehints>=2.0",
+    "sphinx-design>=0.5",
+    "sphinx-autobuild>=2024.0",
+    "ipykernel>=6.0",               # For notebook execution
+    "matplotlib>=3.8",              # For tutorial plots
+    "pandas>=2.0",                  # For tutorial examples
+    "seaborn>=0.13",                # For tutorial visualizations
+    "scikit-learn>=1.4",            # For tutorial examples
+]
+
+[tool.uv]
+# This is a virtual package - no Python code to ship
+package = false

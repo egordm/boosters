@@ -167,6 +167,17 @@ impl PyGBDTModel {
         )
     }
 
+    /// Pickle support: return (callable, args) for reconstruction.
+    ///
+    /// Returns:
+    ///     Tuple of (from_bytes function, (serialized_bytes,)).
+    pub fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<(Py<PyAny>, (Bound<'py, PyBytes>,))> {
+        let bytes = self.to_bytes(py)?;
+        let cls = py.get_type::<Self>();
+        let from_bytes = cls.getattr("from_bytes")?;
+        Ok((from_bytes.into(), (bytes,)))
+    }
+
     /// Make predictions on data.
     ///
     /// Returns transformed predictions (e.g., probabilities for classification).

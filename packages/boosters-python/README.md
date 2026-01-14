@@ -2,9 +2,12 @@
 
 [![Python 3.12+](https://img.shields.io/badge/python-3.12+-blue.svg)](https://www.python.org/downloads/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+[![Documentation](https://img.shields.io/badge/docs-online-blue)](https://egordm.github.io/booste-rs/)
 
 Fast gradient boosting library with native Rust core. Provides both a core API
 and sklearn-compatible estimators.
+
+📚 **[Full Documentation](https://egordm.github.io/booste-rs/)** — See the main documentation for tutorials, API reference, and guides.
 
 ## Features
 

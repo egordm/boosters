@@ -29,11 +29,12 @@ dev = [
 package = false
 
 [tool.uv.workspace]
-members = [ "packages/*" ]
+members = [ "packages/*", "docs" ]
 
 [tool.uv.sources]
 boosters = { workspace = true }
 boosters-eval = { workspace = true }
+boosters-docs = { workspace = true }
 microsoft-python-type-stubs = { git = "https://github.com/microsoft/python-type-stubs.git" }
 
 [tool.ruff]
@@ -330,3 +331,37 @@ help = "CI-style checks (no auto-fixes)"
 sequence = [
   "all --check",
 ]
+
+# Documentation tasks
+[tool.poe.tasks."docs:build"]
+help = "Build Sphinx documentation"
+cmd = "sphinx-build -j auto docs docs/_build/html"
+env = { PYTHONHASHSEED = "0" }
+
+[tool.poe.tasks."docs:serve"]
+help = "Build and serve documentation locally"
+sequence = [
+  "docs:build",
+  { cmd = "python -m http.server -d docs/_build/html 8000" },
+]
+
+[tool.poe.tasks."docs:watch"]
+help = "Watch and auto-rebuild documentation"
+cmd = "sphinx-autobuild docs docs/_build/html --port 8001 --open-browser"
+env = { PYTHONHASHSEED = "0" }
+
+[tool.poe.tasks."docs:clean"]
+help = "Clean documentation build artifacts"
+cmd = "rm -rf docs/_build"
+
+[tool.poe.tasks."docs:linkcheck"]
+help = "Check documentation links"
+cmd = "sphinx-build -b linkcheck docs docs/_build/linkcheck"
+
+[tool.poe.tasks."docs:coverage"]
+help = "Check API documentation coverage"
+cmd = "sphinx-build -b coverage docs docs/_build/coverage"
+
+[tool.poe.tasks."docs:validate"]
+help = "Validate documentation internal links"
+cmd = "python docs/scripts/validate_links.py --docs-root docs"

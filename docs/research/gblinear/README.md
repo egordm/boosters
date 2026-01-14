@@ -12,8 +12,8 @@ relationships or as a quick baseline.
 
 | Folder | Description |
 |--------|-------------|
-| [training/](training/) | Coordinate descent optimization |
-| [inference/](inference/) | Linear prediction |
+| [training/](training/coordinate-descent.md) | Coordinate descent optimization |
+| [inference/](inference/prediction.md) | Linear prediction |
 
 ---
 

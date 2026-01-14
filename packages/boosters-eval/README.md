@@ -1,6 +1,11 @@
 # boosters-eval
 
+[![Documentation](https://img.shields.io/badge/docs-online-blue)](https://egordm.github.io/booste-rs/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 A simple, extensible framework for benchmarking gradient boosting libraries.
+
+📚 **[Full Documentation](https://egordm.github.io/booste-rs/explanations/benchmarks.html)** — See the benchmarks documentation for detailed usage.
 
 ## Quick Start
 

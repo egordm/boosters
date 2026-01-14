@@ -55,6 +55,48 @@ jobs:
       - name: Run full workspace checks
         run: uv run poe check
 
+  examples:
+    name: Test Examples
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v4
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        run: uv python install 3.12
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-examples-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-examples-
+
+      - name: Install dependencies
+        run: uv sync --group dev
+
+      - name: Build Python bindings
+        run: uv run poe python:develop
+
+      - name: Run Python examples
+        run: |
+          for example in packages/boosters-python/examples/*.py; do
+            echo "Running $example..."
+            uv run python "$example"
+          done
+
   persist-cross-language:
     name: Persist Cross-Language
     runs-on: ubuntu-latest

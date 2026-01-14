@@ -75,7 +75,7 @@ Output: Ensemble of trees {T₁, T₂, ..., Tₘ}
 3. Return ensemble {T₁, ..., Tₘ}
 ```
 
-See [Training](training/) for detailed algorithms.
+See [Training](training/quantization.md) for detailed algorithms.
 
 ---
 

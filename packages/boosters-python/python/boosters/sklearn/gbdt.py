@@ -37,7 +37,6 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):
     # Instance attributes (declared for type checking)
     model_: GBDTModel
     n_features_in_: int
-    _config: GBDTConfig
 
     @classmethod
     @abstractmethod
@@ -82,6 +81,7 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):
         metric: Metric | None = None,
     ) -> None:
         # Store all parameters (sklearn convention)
+        # Config is built at fit() time from these attributes to support set_params()
         self.n_estimators = n_estimators
         self.learning_rate = learning_rate
         self.max_depth = max_depth
@@ -100,35 +100,55 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):
         self.objective = objective
         self.metric = metric
 
-        # Validate and create config immediately
-        obj = objective if objective is not None else self._get_default_objective()
-        met = metric if metric is not None else self._get_default_metric()
+    def _build_config(self, objective: Objective | None = None) -> GBDTConfig:
+        """Build config from current attributes.
+
+        Called at fit() time to ensure set_params() changes are reflected.
+
+        Parameters
+        ----------
+        objective : Objective, optional
+            Override objective (used by classifier for multiclass).
+        """
+        obj = objective if objective is not None else self.objective
+        if obj is None:
+            obj = self._get_default_objective()
+        met = self.metric if self.metric is not None else self._get_default_metric()
         self._validate_objective(obj)
 
-        self._config = GBDTConfig(
-            n_estimators=n_estimators,
-            learning_rate=learning_rate,
-            early_stopping_rounds=early_stopping_rounds,
-            seed=seed,
+        return GBDTConfig(
+            n_estimators=self.n_estimators,
+            learning_rate=self.learning_rate,
+            early_stopping_rounds=self.early_stopping_rounds,
+            seed=self.seed,
             objective=obj,
             metric=met,
-            growth_strategy=grow_strategy,
-            max_depth=max_depth,
-            n_leaves=max_leaves,
-            min_child_weight=min_child_weight,
-            min_gain_to_split=gamma,
-            l1=reg_alpha,
-            l2=reg_lambda,
-            subsample=subsample,
-            colsample_bytree=colsample_bytree,
+            growth_strategy=self.grow_strategy,
+            max_depth=self.max_depth,
+            n_leaves=self.max_leaves,
+            min_child_weight=self.min_child_weight,
+            min_gain_to_split=self.gamma,
+            l1=self.reg_alpha,
+            l2=self.reg_lambda,
+            subsample=self.subsample,
+            colsample_bytree=self.colsample_bytree,
         )
 
     @abstractmethod
-    def _prepare_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
+    def _prepare_targets(
+        self, y: NDArray[Any]
+    ) -> tuple[NDArray[np.float32], Objective | None]:
         """Prepare targets for training.
 
         For regressors, this simply casts to float32.
         For classifiers, this performs label encoding.
+
+        Returns
+        -------
+        y_prepared : ndarray of shape (n_samples,)
+            Prepared targets.
+        objective_override : Objective or None
+            Objective to use (e.g., softmax for multiclass), or None to use default.
         """
         ...
 
@@ -166,17 +186,23 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):
         self.n_features_in_ = X.shape[1]
 
         # Prepare targets (handles label encoding for classifiers)
-        y_prepared = self._prepare_targets(y)
+        # Also returns objective override for multiclass classification
+        y_prepared, objective_override = self._prepare_targets(y)
+
+        # Build config at fit time to respect set_params() changes
+        config = self._build_config(objective=objective_override)
 
         train_data = Dataset(X, y_prepared, weights=sample_weight)
         val_data = self._build_val_set(eval_set)
 
         self.model_ = GBDTModel.train(
             train_data,
-            config=self._config,
+            config=config,
             val_set=val_data,
             n_threads=self.n_threads,
         )
+
+        return self
 
         return self
 
@@ -316,9 +342,11 @@ class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):
                 f"For classification, use GBDTClassifier instead."
             )
 
-    def _prepare_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
+    def _prepare_targets(
+        self, y: NDArray[Any]
+    ) -> tuple[NDArray[np.float32], Objective | None]:
         """Prepare regression targets."""
-        return np.asarray(y, dtype=np.float32)
+        return np.asarray(y, dtype=np.float32), None
 
     def _prepare_eval_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
         """Prepare evaluation set targets for regression."""
@@ -403,6 +431,7 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):
 
     @classmethod
     def _get_default_objective(cls) -> Objective:
+        # Default is logistic (binary); overridden in fit() for multiclass
         return Objective.logistic()
 
     @classmethod
@@ -419,12 +448,24 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):
                 f"For regression, use GBDTRegressor instead."
             )
 
-    def _prepare_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
-        """Prepare classification targets with label encoding."""
+    def _prepare_targets(
+        self, y: NDArray[Any]
+    ) -> tuple[NDArray[np.float32], Objective | None]:
+        """Prepare classification targets with label encoding.
+
+        Returns softmax objective override for multiclass if user didn't specify.
+        """
         self.classes_ = np.unique(y)
         self.n_classes_ = len(self.classes_)
         self._label_to_idx = {c: i for i, c in enumerate(self.classes_)}
-        return np.array([self._label_to_idx[c] for c in y], dtype=np.float32)
+
+        # Auto-switch to softmax for multiclass (if user didn't specify objective)
+        objective_override: Objective | None = None
+        if self.n_classes_ > 2 and self.objective is None:
+            objective_override = Objective.softmax(self.n_classes_)
+
+        y_encoded = np.array([self._label_to_idx[c] for c in y], dtype=np.float32)
+        return y_encoded, objective_override
 
     def _prepare_eval_targets(self, y: NDArray[Any]) -> NDArray[np.float32]:
         """Prepare evaluation set targets with label encoding."""

@@ -161,8 +161,8 @@ Modern implementations (XGBoost, LightGBM) add:
 
 ### In This Documentation
 
-- [GBDT](gbdt/) — Decision tree-based gradient boosting
-- [GBLinear](gblinear/) — Linear model-based gradient boosting
+- [GBDT](gbdt/README.md) — Decision tree-based gradient boosting
+- [GBLinear](gblinear/README.md) — Linear model-based gradient boosting
 
 ### Academic Papers
 

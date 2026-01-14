@@ -36,6 +36,7 @@ from boosters.dataset import Dataset, DatasetBuilder, Feature
 from boosters.metrics import Metric
 from boosters.model import GBDTModel, GBLinearModel
 from boosters.objectives import Objective
+from boosters.plotting import plot_tree, tree_to_dataframe
 from boosters.types import GrowthStrategy
 
 __version__: str = getattr(_rs, "__version__", "0.0.0")
@@ -60,6 +61,8 @@ __all__ = [
     "__version__",
     "lightgbm_to_json_bytes",
     "lightgbm_to_schema",
+    "plot_tree",
+    "tree_to_dataframe",
     "xgboost_to_json_bytes",
     "xgboost_to_schema",
 ]

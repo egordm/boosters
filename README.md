@@ -2,6 +2,10 @@
 
 A fast, pure-Rust gradient boosting library for training and inference.
 
+[![Documentation](https://img.shields.io/badge/docs-online-blue)](https://egordm.github.io/booste-rs/)
+[![PyPI](https://img.shields.io/pypi/v/boosters)](https://pypi.org/project/boosters/)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 > **Work in Progress**: This library is under active development but already functional for training and inference with XGBoost/LightGBM compatibility.
 
 ## What is boosters?
@@ -15,7 +19,40 @@ boosters is a gradient boosting implementation written from scratch in Rust, des
 
 ## Quick Start
 
-### Training a Model
+### Python
+
+```python
+import boosters
+import numpy as np
+
+# Create dataset
+X = np.random.randn(1000, 10).astype(np.float32)
+y = (X[:, 0] + X[:, 1] > 0).astype(np.float32)
+
+# Train a GBDT model
+model = boosters.GBDTModel.train(
+    boosters.Dataset(X, y),
+    config=boosters.GBDTConfig(
+        n_trees=100,
+        objective=boosters.Objective.logistic(),
+    ),
+)
+
+# Predict
+predictions = model.predict(X)
+```
+
+Or use the sklearn-compatible API:
+
+```python
+from boosters.sklearn import GBDTClassifier
+from sklearn.model_selection import cross_val_score
+
+model = GBDTClassifier(n_trees=100)
+scores = cross_val_score(model, X, y, cv=5)
+```
+
+### Rust
 
 ```rust
 use boosters::{GBDTModel, GBDTConfig, Objective, Metric};
@@ -134,6 +171,19 @@ Equal or better across regression, binary, and multiclass tasks — with booster
 
 ## Documentation
 
+📚 **[Full Documentation](https://egordm.github.io/booste-rs/)** — Tutorials, API reference, and guides
+
+- [Getting Started](https://egordm.github.io/booste-rs/getting-started/) — Installation and quickstart
+- [Tutorials](https://egordm.github.io/booste-rs/tutorials/) — Step-by-step Jupyter notebooks
+- [API Reference](https://egordm.github.io/booste-rs/api/) — Python and Rust API documentation
+- [Explanations](https://egordm.github.io/booste-rs/explanations/) — Theory and hyperparameter guides
+
+### For Rust Users
+
+See the [Rust API documentation](https://egordm.github.io/booste-rs/rustdoc/boosters/) for detailed Rust API reference.
+
+### Design Documents
+
 - [Roadmap](docs/ROADMAP.md) — Current status and future plans
 - [RFCs](docs/rfcs/) — Design documents for all major components
 - [Benchmarks](docs/benchmarks/) — Performance and quality reports
@@ -141,11 +191,13 @@ Equal or better across regression, binary, and multiclass tasks — with booster
 
 ## Project Status
 
-boosters is functional for both training and inference but not yet production-ready:
+boosters is functional for both training and inference with Python bindings available:
 
-- API may change without notice
-- Some advanced features (monotonic constraints, SHAP) are not yet implemented
-- Python bindings are planned but not yet available
+- API may change without notice (pre-1.0)
+- Some advanced features (monotonic constraints) are not yet implemented
+- Python bindings available via `pip install boosters` (coming soon)
+
+See the [roadmap](docs/ROADMAP.md) for planned features.
 
 ## Development Workflow
 
