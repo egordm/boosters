@@ -103,8 +103,14 @@ jobs:
           echo "Release version: $VERSION"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Apply version
-        run: uv run poe version --version "${{ steps.ver.outputs.version }}"
+      - name: Set version in Cargo.toml
+        shell: bash
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          # Update workspace Cargo.toml
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" Cargo.toml
+          # Update boosters-python Cargo.toml
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" packages/boosters-python/Cargo.toml
 
       - name: Generate stubs
         run: uv run poe python:stubs-gen
@@ -113,7 +119,7 @@ jobs:
         uses: PyO3/maturin-action@v1
         with:
           target: ${{ matrix.target }}
-          args: --release --strip -m packages/boosters-python/Cargo.toml --out dist
+          args: --release --strip -m packages/boosters-python/Cargo.toml --out dist --interpreter python3.12
           manylinux: ${{ matrix.manylinux || 'auto' }}
 
       - name: Upload wheel
@@ -172,8 +178,14 @@ jobs:
           
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
 
-      - name: Apply version
-        run: uv run poe version --version "${{ steps.ver.outputs.version }}"
+      - name: Set version in Cargo.toml
+        shell: bash
+        run: |
+          VERSION="${{ steps.ver.outputs.version }}"
+          # Update workspace Cargo.toml
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" Cargo.toml
+          # Update boosters-python Cargo.toml  
+          sed -i.bak "s/^version = .*/version = \"$VERSION\"/" packages/boosters-python/Cargo.toml
 
       - name: Generate stubs
         run: uv run poe python:stubs-gen
