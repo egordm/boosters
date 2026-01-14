@@ -157,7 +157,7 @@ class TestReportCommand:
 
     def test_report_help(self) -> None:
         """Test report command help."""
-        result = runner.invoke(app, ["report", "--help"])
+        result = runner.invoke(app, ["report", "--help"], env={"NO_COLOR": "1"})
         assert result.exit_code == 0
         assert "dry-run" in result.stdout.lower()
         assert "output" in result.stdout.lower()
