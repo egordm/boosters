@@ -4,6 +4,11 @@ User Guide
 
 Comprehensive guides for using Boosters effectively.
 
+.. tip::
+
+   **New to Boosters?** Start with the :doc:`/getting-started/quickstart-python` 
+   to train your first model in minutes.
+
 Getting Started
 ---------------
 

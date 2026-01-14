@@ -172,10 +172,14 @@ impl GBDTModel {
         // Components receive parallelism flag; thread pool is already set up
         let forest = trainer.train(dataset, binned, targets, weights, val_set, parallelism)?;
 
+        // Extract feature names from dataset schema if available
+        let feature_names = dataset.schema().feature_names();
+
         let meta = ModelMeta {
             n_features,
             n_groups: n_outputs,
             base_scores: forest.base_score().to_vec(),
+            feature_names,
             ..Default::default()
         };
 

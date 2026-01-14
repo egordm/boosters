@@ -107,6 +107,12 @@ impl PyGBDTModel {
         Ok(self.model.meta().n_features)
     }
 
+    /// Feature names from training dataset (if provided).
+    #[getter]
+    pub fn feature_names(&self) -> Option<Vec<String>> {
+        self.model.meta().feature_names.clone()
+    }
+
     /// Get feature importance scores.
     ///
     /// Args:
@@ -171,7 +177,10 @@ impl PyGBDTModel {
     ///
     /// Returns:
     ///     Tuple of (from_bytes function, (serialized_bytes,)).
-    pub fn __reduce__<'py>(&self, py: Python<'py>) -> PyResult<(Py<PyAny>, (Bound<'py, PyBytes>,))> {
+    pub fn __reduce__<'py>(
+        &self,
+        py: Python<'py>,
+    ) -> PyResult<(Py<PyAny>, (Bound<'py, PyBytes>,))> {
         let bytes = self.to_bytes(py)?;
         let cls = py.get_type::<Self>();
         let from_bytes = cls.getattr("from_bytes")?;

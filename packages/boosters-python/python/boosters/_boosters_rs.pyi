@@ -488,6 +488,11 @@ class GBDTModel:
         r"""
         Number of features the model was trained on.
         """
+    @property
+    def feature_names(self) -> typing.Optional[builtins.list[builtins.str]]:
+        r"""
+        Feature names from training dataset (if provided).
+        """
     @staticmethod
     def train(train: Dataset, config: typing.Optional[GBDTConfig] = None, val_set: typing.Optional[Dataset] = None, n_threads: builtins.int = 0) -> GBDTModel:
         r"""
@@ -527,6 +532,13 @@ class GBDTModel:
     def __repr__(self) -> builtins.str:
         r"""
         String representation.
+        """
+    def __reduce__(self) -> tuple[typing.Any, tuple[bytes]]:
+        r"""
+        Pickle support: return (callable, args) for reconstruction.
+        
+        Returns:
+            Tuple of (from_bytes function, (serialized_bytes,)).
         """
     def predict(self, data: Dataset, n_threads: builtins.int = 0) -> numpy.typing.NDArray[numpy.float32]:
         r"""
@@ -716,6 +728,11 @@ class GBLinearModel:
         Number of features the model was trained on.
         """
     @property
+    def feature_names(self) -> typing.Optional[builtins.list[builtins.str]]:
+        r"""
+        Feature names from training dataset (if provided).
+        """
+    @property
     def coef_(self) -> typing.Any:
         r"""
         Model coefficients (weights).
@@ -751,6 +768,13 @@ class GBLinearModel:
     def __repr__(self) -> builtins.str:
         r"""
         String representation.
+        """
+    def __reduce__(self) -> tuple[typing.Any, tuple[bytes]]:
+        r"""
+        Pickle support: return (callable, args) for reconstruction.
+        
+        Returns:
+            Tuple of (from_bytes function, (serialized_bytes,)).
         """
     def predict(self, data: Dataset, n_threads: builtins.int = 0) -> numpy.typing.NDArray[numpy.float32]:
         r"""

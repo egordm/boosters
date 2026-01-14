@@ -347,7 +347,7 @@ sequence = [
 
 [tool.poe.tasks."docs:watch"]
 help = "Watch and auto-rebuild documentation"
-cmd = "sphinx-autobuild docs docs/_build/html --port 8001 --open-browser"
+cmd = "sphinx-autobuild docs docs/_build/html --port 8002 --open-browser"
 env = { PYTHONHASHSEED = "0" }
 
 [tool.poe.tasks."docs:clean"]

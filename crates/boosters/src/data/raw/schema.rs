@@ -199,6 +199,25 @@ impl DatasetSchema {
         self.features.iter().enumerate()
     }
 
+    /// Extract feature names from the schema.
+    ///
+    /// Returns `Some(names)` if all features have names set, `None` otherwise.
+    /// This is useful for copying feature names to model metadata during training.
+    pub fn feature_names(&self) -> Option<Vec<String>> {
+        let names: Vec<String> = self
+            .features
+            .iter()
+            .filter_map(|m| m.name.clone())
+            .collect();
+
+        // Only return if we have names for all features
+        if names.len() == self.features.len() {
+            Some(names)
+        } else {
+            None
+        }
+    }
+
     /// Add a feature to the schema.
     pub fn push(&mut self, meta: FeatureMeta) {
         self.features.push(meta);
@@ -277,6 +296,34 @@ mod tests {
         assert_eq!(schema.n_features(), 2);
         assert_eq!(schema.feature_index("x"), Some(0));
         assert_eq!(schema.feature_index("y"), Some(1));
+    }
+
+    #[test]
+    fn schema_feature_names_all_named() {
+        let schema = DatasetSchema::from_features(vec![
+            FeatureMeta::numeric_named("a"),
+            FeatureMeta::numeric_named("b"),
+            FeatureMeta::categorical_named("c"),
+        ]);
+        let names = schema.feature_names();
+        assert_eq!(names, Some(vec!["a".into(), "b".into(), "c".into()]));
+    }
+
+    #[test]
+    fn schema_feature_names_partial() {
+        // If some features are unnamed, return None
+        let schema = DatasetSchema::from_features(vec![
+            FeatureMeta::numeric_named("a"),
+            FeatureMeta::numeric(), // No name
+        ]);
+        assert!(schema.feature_names().is_none());
+    }
+
+    #[test]
+    fn schema_feature_names_empty() {
+        let schema = DatasetSchema::new();
+        // Empty schema should return Some(empty vec)
+        assert_eq!(schema.feature_names(), Some(vec![]));
     }
 
     // Verify Send + Sync

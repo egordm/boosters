@@ -21,7 +21,7 @@ def _get_tree_data(model: GBDTModel, tree_index: int) -> dict[str, Any]:
     tree_index : int
         Index of tree to extract (0-indexed).
 
-    Returns
+    Returns:
     -------
     dict
         Tree data with nodes, splits, thresholds, etc.
@@ -52,15 +52,16 @@ def tree_to_dataframe(
     tree_index : int, default=0
         Index of tree to display (0-indexed).
     feature_names : list of str, optional
-        Feature names for readable output. If None, uses "f0", "f1", etc.
+        Feature names for readable output. If None, uses names from the model
+        (if available) or falls back to "f0", "f1", etc.
 
-    Returns
+    Returns:
     -------
     pd.DataFrame
         DataFrame with columns: node_id, is_leaf, feature, threshold,
         left_child, right_child, value, gain, cover.
 
-    Examples
+    Examples:
     --------
     >>> import boosters
     >>> from boosters.plotting import tree_to_dataframe
@@ -85,7 +86,9 @@ def tree_to_dataframe(
     gains = tree["gains"]
     covers = tree["covers"]
 
-    # Determine feature names
+    # Determine feature names: explicit > model > fallback
+    if feature_names is None:
+        feature_names = model.feature_names
     if feature_names is None:
         n_features = model.n_features
         feature_names = [f"f{i}" for i in range(n_features)]
@@ -148,7 +151,8 @@ def plot_tree(
     tree_index : int, default=0
         Index of tree to plot (0-indexed).
     feature_names : list of str, optional
-        Feature names for readable labels. If None, uses "f0", "f1", etc.
+        Feature names for readable labels. If None, uses names from the model
+        (if available) or falls back to "f0", "f1", etc.
     figsize : tuple of float, optional
         Figure size as (width, height). Default is auto-calculated.
     precision : int, default=3
@@ -158,12 +162,12 @@ def plot_tree(
     ax : matplotlib.axes.Axes, optional
         Axes to plot on. If None, creates new figure.
 
-    Returns
+    Returns:
     -------
     matplotlib.axes.Axes
         The axes containing the plot.
 
-    Examples
+    Examples:
     --------
     >>> import boosters
     >>> from boosters.plotting import plot_tree
@@ -171,7 +175,7 @@ def plot_tree(
     >>> ax = plot_tree(model, tree_index=0, feature_names=["age", "income", "score"])
     >>> plt.show()
 
-    Notes
+    Notes:
     -----
     Similar to LightGBM's `plot_tree` and XGBoost's `plot_tree` functions.
     Shows split conditions, leaf values, gain, and sample coverage.
@@ -194,7 +198,9 @@ def plot_tree(
     gains = tree["gains"]
     covers = tree["covers"]
 
-    # Determine feature names
+    # Determine feature names: explicit > model > fallback
+    if feature_names is None:
+        feature_names = model.feature_names
     if feature_names is None:
         n_features = model.n_features
         feature_names = [f"f{i}" for i in range(n_features)]
@@ -204,9 +210,7 @@ def plot_tree(
         return children_left[node_id] == 0 and children_right[node_id] == 0
 
     # Compute depth and position for each node
-    def compute_layout(
-        node_id: int, depth: int, left: float, right: float
-    ) -> dict[int, tuple[float, float]]:
+    def compute_layout(node_id: int, depth: int, left: float, right: float) -> dict[int, tuple[float, float]]:
         """Compute x,y positions for each node."""
         positions = {}
         x = (left + right) / 2

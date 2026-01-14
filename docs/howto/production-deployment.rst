@@ -66,18 +66,19 @@ Always batch predictions when possible:
 Pre-allocate Output
 ^^^^^^^^^^^^^^^^^^^
 
-For repeated predictions, pre-allocate arrays:
+For repeated predictions, reuse arrays efficiently:
 
 .. code-block:: python
 
    import numpy as np
 
-   # Pre-allocate
-   buffer = np.empty(batch_size, dtype=np.float32)
-
+   # Process in batches
+   results = []
    for batch in batches:
-       model.predict(batch, out=buffer)  # If supported
-       process(buffer)
+       predictions = model.predict(batch)
+       results.append(predictions)
+   
+   all_predictions = np.concatenate(results)
 
 Warm Starts
 ^^^^^^^^^^^

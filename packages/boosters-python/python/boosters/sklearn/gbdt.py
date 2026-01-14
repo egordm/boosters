@@ -135,15 +135,13 @@ class _GBDTEstimatorBase(BaseEstimator, ABC):
         )
 
     @abstractmethod
-    def _prepare_targets(
-        self, y: NDArray[Any]
-    ) -> tuple[NDArray[np.float32], Objective | None]:
+    def _prepare_targets(self, y: NDArray[Any]) -> tuple[NDArray[np.float32], Objective | None]:
         """Prepare targets for training.
 
         For regressors, this simply casts to float32.
         For classifiers, this performs label encoding.
 
-        Returns
+        Returns:
         -------
         y_prepared : ndarray of shape (n_samples,)
             Prepared targets.
@@ -342,9 +340,7 @@ class GBDTRegressor(_GBDTEstimatorBase, RegressorMixin):
                 f"For classification, use GBDTClassifier instead."
             )
 
-    def _prepare_targets(
-        self, y: NDArray[Any]
-    ) -> tuple[NDArray[np.float32], Objective | None]:
+    def _prepare_targets(self, y: NDArray[Any]) -> tuple[NDArray[np.float32], Objective | None]:
         """Prepare regression targets."""
         return np.asarray(y, dtype=np.float32), None
 
@@ -448,9 +444,7 @@ class GBDTClassifier(_GBDTEstimatorBase, ClassifierMixin):
                 f"For regression, use GBDTRegressor instead."
             )
 
-    def _prepare_targets(
-        self, y: NDArray[Any]
-    ) -> tuple[NDArray[np.float32], Objective | None]:
+    def _prepare_targets(self, y: NDArray[Any]) -> tuple[NDArray[np.float32], Objective | None]:
         """Prepare classification targets with label encoding.
 
         Returns softmax objective override for multiclass if user didn't specify.

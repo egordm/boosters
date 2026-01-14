@@ -86,9 +86,13 @@ impl GBLinearModel {
         let trainer = GBLinearTrainer::new(objective, metric, params);
         let linear_model = trainer.train(dataset, targets, weights, val_set)?;
 
+        // Extract feature names from dataset schema if available
+        let feature_names = dataset.schema().feature_names();
+
         let meta = ModelMeta {
             n_features,
             n_groups: n_outputs,
+            feature_names,
             ..Default::default()
         };
 

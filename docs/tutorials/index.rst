@@ -77,6 +77,12 @@ Tutorials
 
       GBDT with linear regression in leaves.
 
+   .. grid-item-card:: 🟡 11. Sample Weighting
+      :link: 11-sample-weighting
+      :link-type: doc
+
+      Handle class imbalance and concept drift.
+
 
 .. toctree::
    :maxdepth: 1
@@ -92,3 +98,4 @@ Tutorials
    08-explainability
    09-model-serialization
    10-linear-trees
+   11-sample-weighting
