@@ -1,10 +1,11 @@
 name: Python
 
+# DISABLED: Using poe tasks in ci.yml instead
 on:
   push:
-    branches: [master, main]
+    branches: [never]  # Disable this workflow
   pull_request:
-    branches: [master, main]
+    branches: [never]  # Disable this workflow
 
 env:
   CARGO_TERM_COLOR: always
