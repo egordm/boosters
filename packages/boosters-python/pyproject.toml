@@ -25,10 +25,10 @@ classifiers = [
 ]
 dependencies = [
   "numpy>=1.26",
+  "pydantic>=2",
 ]
 
 optional-dependencies.pandas = [ "pandas>=2" ]
-optional-dependencies.schema = [ "pydantic>=2" ]
 
 [dependency-groups]
 dev = [
