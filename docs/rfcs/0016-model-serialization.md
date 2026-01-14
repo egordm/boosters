@@ -7,7 +7,7 @@
 
 ## Implementation Tracking
 
-Implementation work is tracked in [docs/backlogs/0016-model-serialization.md](../backlogs/0016-model-serialization.md).
+Implementation work is tracked in [docs/backlogs/0016-model-serialization.md](https://github.com/egordm/booste-rs/blob/main/docs/backlogs/0016-model-serialization.md).
 
 ## Summary
 

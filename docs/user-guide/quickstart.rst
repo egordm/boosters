@@ -168,6 +168,6 @@ Next Steps
 ----------
 
 - :doc:`/tutorials/index` — Hands-on tutorials for common tasks
-- :doc:`/explanations/hyperparameters` — Understanding hyperparameters
+- :doc:`/user-guide/hyperparameters` — Understanding hyperparameters
 - :doc:`/api/index` — Complete API reference
 - :doc:`/rfcs/0008-gbdt-training` — GBDT training algorithm details

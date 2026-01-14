@@ -15,7 +15,7 @@ your first model trained in minutes.
       Install boosters via pip or build from source.
 
    .. grid-item-card:: Python Quickstart
-      :link: quickstart-python
+      :link: /user-guide/quickstart
       :link-type: doc
 
       Train your first GBDT model in Python.
@@ -32,5 +32,4 @@ your first model trained in minutes.
    :hidden:
 
    installation
-   quickstart-python
    quickstart-rust

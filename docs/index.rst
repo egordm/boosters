@@ -6,26 +6,7 @@ boosters
 
 **boosters** is a high-performance gradient boosting library for Python and Rust.
 
-.. raw:: html
-
-   <div style="display: flex; flex-wrap: wrap; gap: 1.5rem; margin: 1.5rem 0;">
-     <div style="display: flex; align-items: center; gap: 0.5rem;">
-       <span style="font-size: 1.2rem;">⚡</span>
-       <span><strong>Fast</strong> — Rust core</span>
-     </div>
-     <div style="display: flex; align-items: center; gap: 0.5rem;">
-       <span style="font-size: 1.2rem;">🔌</span>
-       <span><strong>Compatible</strong> — sklearn API</span>
-     </div>
-     <div style="display: flex; align-items: center; gap: 0.5rem;">
-       <span style="font-size: 1.2rem;">🎯</span>
-       <span><strong>Flexible</strong> — GBDT & GBLinear</span>
-     </div>
-     <div style="display: flex; align-items: center; gap: 0.5rem;">
-       <span style="font-size: 1.2rem;">🔍</span>
-       <span><strong>Explainable</strong> — SHAP values</span>
-     </div>
-   </div>
+| ⚡ **Fast** · Rust core | 🔌 **Compatible** · sklearn API | 🎯 **Flexible** · GBDT & GBLinear | 🔍 **Explainable** · SHAP values |
 
 Installation
 ------------
